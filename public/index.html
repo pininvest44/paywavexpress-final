@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Paywave Bulk STK Push Controller</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.2/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .log-success { border-left: 5px solid #28a745; background-color: #f4fff6; }
+        .log-failed { border-left: 5px solid #dc3545; background-color: #fff5f5; }
+        .log-card { margin-bottom: 8px; font-size: 0.9rem; font-family: monospace; }
+    </style>
+</head>
+<body class="bg-light py-5">
+    <div class="container" style="max-width: 900px;">
+        <h2 class="mb-4 text-center">🎯 Paywave Express Bulk STK Pusher</h2>
+
+        <div class="row g-4">
+            <div class="col-md-6">
+                <div class="card shadow-sm p-4 bg-white">
+                    <form id="stkForm">
+                        <div class="mb-3">
+                            <label class="form-label font-monospace fw-bold">Phone Numbers (One Per Line)</label>
+                            <textarea id="phoneInput" class="form-control font-monospace" rows="6" placeholder="0712345678&#10;0787654321&#10;254711223344" required></textarea>
+                            <div class="form-text text-muted">Supports 07..., 01... or 254... formats.</div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-bold">Amount (KES)</label>
+                                <input type="number" id="amountInput" class="form-control" value="1" min="1" required>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label fw-bold">Base Reference</label>
+                                <input type="text" id="refInput" class="form-control" value="BATCH" required>
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Account Number (Optional Paybill)</label>
+                            <input type="text" id="accInput" class="form-control" placeholder="e.g. Account Name">
+                        </div>
+
+                        <button type="submit" class="btn btn-primary w-100 py-2 fw-bold">🚀 Initiate Bulk Payment</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card shadow-sm p-4 bg-white h-100 d-flex flex-column">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h4 class="mb-0">Monitoring Logs</h4>
+                        <button id="clearBtn" class="btn btn-outline-danger btn-sm">Clear</button>
+                    </div>
+
+                    <div class="alert alert-secondary p-2 mb-3 text-center d-flex justify-content-around">
+                        <div>Queue Remaining: <strong id="queueCounter">0</strong></div>
+                        <div>Status: <span id="statusIndicator" class="badge bg-secondary">Idle</span></div>
+                    </div>
+
+                    <div id="logContainer" class="flex-grow-1 overflow-auto" style="max-height: 320px; border: 1px solid #dee2e6; padding: 10px; border-radius: 4px;">
+                        <p class="text-muted text-center my-5">No transaction activities running yet...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const stkForm = document.getElementById('stkForm');
+        const logContainer = document.getElementById('logContainer');
+        const queueCounter = document.getElementById('queueCounter');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const clearBtn = document.getElementById('clearBtn');
+
+        stkForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const rawPhones = document.getElementById('phoneInput').value.split('\n').filter(p => p.trim() !== '');
+            const payload = {
+                phones: rawPhones,
+                amount: document.getElementById('amountInput').value,
+                reference: document.getElementById('refInput').value,
+                accountNumber: document.getElementById('accInput').value
+            };
+
+            const res = await fetch('/api/bulk-push', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (res.ok) {
+                document.getElementById('phoneInput').value = '';
+            } else {
+                alert('Submission failed!');
+            }
+        });
+
+        clearBtn.addEventListener('click', async () => {
+            await fetch('/api/reset', { method: 'POST' });
+        });
+
+        // Real-Time dashboard update cycles (Every 1 second)
+        setInterval(async () => {
+            const res = await fetch('/api/status');
+            if (res.ok) {
+                const state = await res.json();
+                queueCounter.textContent = state.queueLength;
+
+                if (state.isProcessing) {
+                    statusIndicator.className = "badge bg-success";
+                    statusIndicator.textContent = "Processing";
+                } else {
+                    statusIndicator.className = "badge bg-secondary";
+                    statusIndicator.textContent = "Idle";
+                }
+
+                if (state.logs.length === 0) {
+                    logContainer.innerHTML = `<p class="text-muted text-center my-5">No logs available</p>`;
+                } else {
+                    logContainer.innerHTML = state.logs.map(log => `
+                        <div class="card log-card p-2 ${log.status === 'SUCCESS' ? 'log-success' : 'log-failed'}">
+                            <strong>[${log.time}] ${log.phone}</strong> -> <span class="badge ${log.status === 'SUCCESS' ? 'bg-success' : 'bg-danger'}">${log.status}</span>
+                            <div class="text-secondary small mt-1">${log.details}</div>
+                        </div>
+                    `).join('');
+                }
+            }
+        }, 1000);
+    </script>
+</body>
+</html>
