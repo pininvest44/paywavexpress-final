@@ -14,23 +14,25 @@ let taskQueue = [];
 let isProcessing = false;
 let executionLogs = [];
 
-// Helper utility to format phone numbers to "07..." or "2547..." format securely
+// Helper utility to format phone numbers securely
 const cleanPhoneNumber = (phone) => {
   let cleaned = phone.replace(/\D/g, ''); // Strip non-numeric chars
   if (cleaned.startsWith('0')) {
     return cleaned; // Keeps '07...' standard
   } else if (cleaned.startsWith('254') && cleaned.length === 12) {
-    return '0' + cleaned.slice(3); // normalizes 2547... to 07...
+    return '0' + cleaned.slice(3); // Normalizes 2547... to 07...
+  } else if (cleaned.length === 9) {
+    return '0' + cleaned; // Fixes accidental 9-digit inputs missing '0'
   }
   return cleaned;
 };
 
-// Queue Processing Loop (Exactly 17 requests per minute -> ~3.53 seconds per request)
+// Queue Processing Loop (Exactly 5 seconds per request -> 12 requests per minute)
 const processQueue = async () => {
   if (isProcessing || taskQueue.length === 0) return;
   isProcessing = true;
 
-  const DELAY_MS = Math.ceil(60000 / 17); // ~3530 milliseconds
+  const DELAY_MS = 5000; // Strict 5-second delay between triggers
 
   while (taskQueue.length > 0) {
     const task = taskQueue.shift();
@@ -55,7 +57,14 @@ const processQueue = async () => {
         body: JSON.stringify(payload),
       });
 
-      const responseData = await response.json();
+      // Secure JSON extraction to survive non-JSON HTTP errors (502, 504, etc.)
+      let responseData = {};
+      const responseText = await response.text();
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (e) {
+        responseData = { message: `Gateway Error (${response.status})` };
+      }
 
       if (response.ok) {
         executionLogs.unshift({
@@ -81,7 +90,12 @@ const processQueue = async () => {
       });
     }
 
-    // Rate Limit Enforcer (Pause loop for 3.53s)
+    // Keep memory in check (Discard logs older than the last 500 runs)
+    if (executionLogs.length > 500) {
+      executionLogs = executionLogs.slice(0, 500);
+    }
+
+    // Rate Limit Enforcer (Pause loop for 5.00s before pulling the next task)
     if (taskQueue.length > 0) {
       await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     }
@@ -124,11 +138,12 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// API Endpoint to reset log dashboard
+// API Endpoint to reset log dashboard safely
 app.post('/api/reset', (req, res) => {
   executionLogs = [];
   taskQueue = [];
-  isProcessing = false;
+  // Notice we do NOT manually set isProcessing = false.
+  // This allows the current execution loop to terminate naturally without spawning a parallel loop.
   res.json({ message: 'Dashboard cleared.' });
 });
 
